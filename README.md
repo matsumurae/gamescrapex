@@ -7,7 +7,7 @@
 
 ## How to use it
 
-### Fitgirl
+### Fitgirl
 
 Add your `.env` file with
 

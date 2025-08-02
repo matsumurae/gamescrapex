@@ -106,21 +106,56 @@ function loadState() {
 }
 
 // Scrape newest games from page 1
-async function scrapeNewestGames(browser) {
-    const page = await browser.newPage();
-    let currentPageUrl = baseUrl;
-    let hasNextPage = true;
-
+async function scrapeNewestGames(browser, attempt = 1) {
+    let page = null;
     try {
+        page = await browser.newPage();
+        let currentPageUrl = baseUrl;
+        let hasNextPage = true;
+
+        log.data(`Starting scraping new games… Wait a moment…`);
+
         await configurePage(page);
 
         while (hasNextPage) {
-            // Navigate to the current page
-            await page.goto(currentPageUrl, {
-                waitUntil: "networkidle2",
-                timeout: timeout,
-            });
-            await new Promise((resolve) => setTimeout(resolve, retryDelay));
+            // Navigate to the current page with retry logic
+            try {
+                await page.goto(currentPageUrl, {
+                    waitUntil: "networkidle2",
+                    timeout: timeout,
+                });
+                await new Promise((resolve) => setTimeout(resolve, retryDelay));
+            } catch (err) {
+                if (
+                    err.message.includes("Navigation timeout") ||
+                    err.message.includes("net::ERR_CONNECTION_REFUSED") ||
+                    err.message.includes("net::ERR_CONNECTION_RESET")
+                ) {
+                    log.warn(
+                        `Navigation attempt failed for ${currentPageUrl}. Error: ${err.message}`
+                    );
+                    if (attempt === maxRetries) {
+                        log.error(`All retries failed for ${currentPageUrl}`);
+                        await page.close();
+                        return;
+                    }
+                    log.info(
+                        `Retrying ${currentPageUrl} (attempt ${
+                            attempt + 1
+                        }/${maxRetries})`,
+                        {
+                            currentPageUrl,
+                        }
+                    );
+                    await new Promise((resolve) =>
+                        setTimeout(resolve, retryDelay)
+                    );
+                    await page.close();
+                    return scrapeNewestGames(browser, attempt + 1);
+                } else {
+                    throw err;
+                }
+            }
 
             // Step 2: Select all articles and extract data
             const articles = await page.evaluate(() => {
@@ -131,6 +166,7 @@ async function scrapeNewestGames(browser) {
                         const time = article.querySelector("time.entry-date");
                         const titleLink =
                             article.querySelector(".entry-title > a");
+                        log.data(`New game ${titleLink?.textContent.trim()}`);
                         return {
                             timestamp: time?.getAttribute("datetime"),
                             name: titleLink?.textContent.trim(),
@@ -252,8 +288,11 @@ async function scrapeNewestGames(browser) {
 
         await page.close();
     } catch (err) {
-        log.error("Newest games scraping failed", { error: err.message });
-        await page.close();
+        log.error(`Newest games scraping failed. Error: ${err.message}`);
+        if (page) {
+            await page.close();
+        }
+        throw err;
     }
 }
 

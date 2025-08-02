@@ -3,11 +3,18 @@
 1. Imitate a real browser using pupetteer
 2. Retrieve newest games
 3. Keep the number of pages to avoid re-checking every time
-4. **Search** uses the local JSON data instead of scraping again (saving time)
+4. **Search** using local JSON data instead of scraping again (saving time)
 
-## How to use it
+List of providers:
+✅ Fitgirl
 
-### Fitgirl
+Future providers:
+🌀 DODI (Currently working)
+🔍 GOG Games
+🔍 SteamRIP
+🔍 Elamigos
+
+## Fitgirl
 
 Add your `.env` file with
 
@@ -30,11 +37,11 @@ TIMEOUT=30000
 | fitgirl:newest  | Scrapes game, saves new entries and tracks progress.                                            |
 | fitgirl:pages   | Scrape all pages and save them.                                                                 |
 
-#### fitgirl:compare
+### fitgirl:compare
 
 Checks which games aren't on `games.json` and fetch the data on her website to add them.
 
-#### fitgirl:count
+### fitgirl:count
 
 Loads and counts items from three files (games.json, complete.json, and temp.json). It checks for duplicates in games.json, compares the lists to find items unique to each file, logs this info, and returns a summary of counts and differences.
 
@@ -50,11 +57,11 @@ Reading games.json… It has 3253 and 3251 verified.
 ⚠️ 2669 missing games.
 ```
 
-#### fitgirl:find
+### fitgirl:find
 
 Search in games.json any game.
 
-#### fitgirl:update
+### fitgirl:update
 
 Checks and updates game dates and links by comparing local JSON data with website info using Puppeteer.
 
@@ -66,11 +73,11 @@ This will update:
 -   Magnet link
 -   Direct links (datanodes and fuckingfast)
 
-#### fitgirl:newest
+### fitgirl:newest
 
 Scrape only new games, if you have a `lastChecked` inside `cache.json`.
 
-#### fitgirl:pages
+### itgirl:pages
 
 **If you don't have a `complete.json` file… Be patient! This takes a bit of time.**
 

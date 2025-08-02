@@ -6,13 +6,14 @@
 4. **Search** using local JSON data instead of scraping again (saving time)
 
 List of providers:
-✅ Fitgirl
 
-Future providers:
-🌀 DODI (Currently working)
-🔍 GOG Games
-🔍 SteamRIP
-🔍 Elamigos
+| Provider  | Status        |
+| --------- | ------------- |
+| Fitgirl   | Done ✅       |
+| DODI      | Working on 🔥 |
+| GOG Games | Pending       |
+| SteamRIP  | Pending       |
+| Elamigos  | Pending       |
 
 ## Fitgirl
 

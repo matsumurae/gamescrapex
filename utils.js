@@ -1,6 +1,10 @@
 const log = require("@vladmandic/pilogger");
 const fs = require("fs");
 
+const puppeteer = require("puppeteer-extra");
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+puppeteer.use(StealthPlugin());
+
 const maxRetries = parseInt(process.env.MAX_RETRIES);
 const retryDelay = parseInt(process.env.RETRY_DELAY);
 const timeout = parseInt(process.env.TIMEOUT);
@@ -52,6 +56,26 @@ async function configurePage(page) {
                 ? Promise.resolve({ state: Notification.permission })
                 : originalQuery(parameters);
     });
+}
+
+async function getPuppeteer(timeout = 50000) {
+    try {
+        const browser = await puppeteer.launch({
+            headless: true,
+            args: [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--ignore-certificate-errors",
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
+            ],
+            protocolTimeout: timeout,
+        });
+        return browser;
+    } catch (err) {
+        log.error(`Failed to launch Puppeteer browser: ${err.message}`);
+        throw err;
+    }
 }
 
 // Fetch HTML content of a URI using Puppeteer with retries
@@ -137,14 +161,27 @@ async function saveFile(data, file, options = {}) {
                 games = JSON.parse(existingData);
             }
 
-            if (!games.find((g) => g.link === data.link)) {
-                games.push(data);
-                fs.writeFileSync(file, JSON.stringify(games, null, 2));
-                log.info(`🔥 Saved ${data.name} to ${file}`);
+            const existingGameIndex = games.findIndex(
+                (g) => g.link === data.link
+            );
+            if (existingGameIndex !== -1) {
+                // Update existing game
+                const existingGame = games[existingGameIndex];
+                games[existingGameIndex] = {
+                    ...existingGame,
+                    name: data.name,
+                    direct: data.direct || existingGame.direct || {},
+                    magnet: data.magnet || existingGame.magnet || null,
+                    lastChecked: data.lastChecked || new Date().toISOString(),
+                };
+                log.info(`🔄 Updated ${data.name} in ${file}`);
             } else {
-                log.debug(`‼️ ${data.name} game already exists. Skipping…`);
-                return;
+                // Add new game
+                games.push(data);
+                log.info(`🔥 Saved ${data.name} to ${file}`);
             }
+
+            fs.writeFileSync(file, JSON.stringify(games, null, 2));
         } else {
             // Deduplicate by link
             const seenLinks = new Set();
@@ -305,6 +342,7 @@ async function deleteTemp(file) {
 module.exports = {
     configurePage,
     fetchHtml,
+    getPuppeteer,
     loadFile,
     saveFile,
     saveCache,

@@ -4,8 +4,6 @@
 require("dotenv").config();
 
 const fs = require("fs");
-const puppeteer = require("puppeteer-extra");
-const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const log = require("@vladmandic/pilogger");
 const {
     saveFile,
@@ -15,10 +13,9 @@ const {
     loadTemp,
     saveTemp,
     deleteTemp,
+    getPuppeteer,
 } = require("../utils");
 const { details } = require("./utils");
-
-puppeteer.use(StealthPlugin());
 
 const file = process.env.FILE;
 const cacheFile = process.env.CACHE_FILE;
@@ -327,17 +324,7 @@ async function main() {
     }
 
     const args = process.argv.slice(2);
-    const browser = await puppeteer.launch({
-        headless: true,
-        args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--ignore-certificate-errors",
-            "--disable-gpu", // Disable GPU for compatibility
-            "--disable-dev-shm-usage", // Avoid shared memory issues
-        ],
-        protocolTimeout: 60000,
-    });
+    const browser = await getPuppeteer(timeout);
 
     try {
         let games = await loadFile(file);

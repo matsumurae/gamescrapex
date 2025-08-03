@@ -1,9 +1,6 @@
 // Check if dates changed on website and update magnet and DDL links
 require("dotenv").config();
 
-const fs = require("fs");
-const puppeteer = require("puppeteer-extra");
-const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const log = require("@vladmandic/pilogger");
 const {
     fetchHtml,
@@ -11,12 +8,12 @@ const {
     saveFile,
     loadProgress,
     saveProgress,
+    getPuppeteer,
 } = require("../utils");
-
-puppeteer.use(StealthPlugin());
 
 const maxRetries = parseInt(process.env.MAX_RETRIES);
 const retryDelay = parseInt(process.env.RETRY_DELAY);
+const timeout = parseInt(process.env.TIMEOUT);
 const progressFile = "progress.json";
 const file = process.env.FILE;
 
@@ -47,14 +44,7 @@ async function checkTimestampsAgainstWebsite(
     let skippedCount = 0;
     const today = new Date().toISOString().split("T")[0];
 
-    const browser = await puppeteer.launch({
-        headless: true,
-        args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--ignore-certificate-errors",
-        ],
-    });
+    const browser = await getPuppeteer(timeout);
 
     try {
         for (let i = startFrom; i < games.length; i++) {

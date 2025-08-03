@@ -3,17 +3,18 @@
 // This was made because: the original code doesn't check already verified games, it doesn't retry on failure, and it doesn't save the direct links to the database.
 require("dotenv").config();
 
-const fs = require("fs");
-const puppeteer = require("puppeteer-extra");
-const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const log = require("@vladmandic/pilogger");
-const { configurePage, fetchHtml, saveFile, loadFile } = require("../utils");
-
-// Add stealth plugin to Puppeteer
-puppeteer.use(StealthPlugin());
+const {
+    configurePage,
+    fetchHtml,
+    saveFile,
+    loadFile,
+    getPuppeteer,
+} = require("../utils");
 
 // Configurable
 const maxRetries = parseInt(process.env.MAX_RETRIES);
+const timeout = parseInt(process.env.TIMEOUT);
 const retryDelay = parseInt(process.env.RETRY_DELAY);
 const file = process.env.FILE;
 
@@ -120,14 +121,7 @@ async function main() {
     // log.configure({ inspect: { breakLength: 500 } });
     // log.headerJson();
 
-    const browser = await puppeteer.launch({
-        headless: true,
-        args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--ignore-certificate-errors",
-        ],
-    });
+    const browser = await getPuppeteer(timeout);
 
     try {
         const games = await loadFile(file);

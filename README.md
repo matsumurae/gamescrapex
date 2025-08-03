@@ -7,13 +7,13 @@
 
 List of providers:
 
-| Provider  | Status        |
-| --------- | ------------- |
-| Fitgirl   | Done ✅       |
-| DODI      | Working on 🔥 |
-| GOG Games | Pending       |
-| SteamRIP  | Pending       |
-| Elamigos  | Pending       |
+| Provider   | Status | Last update | Total                |
+| ---------- | ------ | ----------- | -------------------- |
+| 🔥 Fitgirl | ✅     | 3/08/2025   | 5933 (5804 verified) |
+| DODI       | WIP    | —           | —                    |
+| GOG Games  | TODO   | —           | —                    |
+| SteamRIP   | TODO   | —           | —                    |
+| Elamigos   | TODO   | —           | —                    |
 
 ## Fitgirl
 
@@ -37,6 +37,7 @@ TIMEOUT=30000
 | fitgirl:find    | Searches a game JSON file for a term or shows newest and largest games, then logs the results   |
 | fitgirl:update  | Checks and updates game dates and links by comparing JSON data with website using Puppeteer.    |
 | fitgirl:newest  | Scrapes game, saves new entries and tracks progress.                                            |
+| fitgirl:url     | Scrape specific URL using args and check if name or links changed.                              |
 | fitgirl:pages   | Scrape all pages and save them.                                                                 |
 
 ### fitgirl:compare
@@ -79,8 +80,16 @@ This will update:
 
 Scrape only new games, if you have a `lastChecked` inside `cache.json`.
 
+### fitgirl:url
+
+Scrape specific url using arguments. Checks if name and links changed to update.
+
+`npm run fitgirl:url <URL>`
+
 ### itgirl:pages
 
 **If you don't have a `complete.json` file… Be patient! This takes a bit of time.**
 
 Scrape all from A to Z and adds them to `complete.json`. For this, use the flag `--all`.
+
+## DODI

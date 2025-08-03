@@ -244,7 +244,7 @@ async function countItems() {
         const gamesCount = games.length;
         const completeGames = await loadComplete();
         const completeCount = completeGames.length;
-        const tempGames = await loadTemp(tempFile);
+        const tempGames = await loadTemp(tempFile, false);
         const tempCount = tempGames.length;
         const gamesLinks = new Set(games.map((game) => game.link));
         const completeLinks = new Set(completeGames.map((game) => game.link));

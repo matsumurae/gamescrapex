@@ -257,10 +257,15 @@ async function saveProgress(file, index) {
     }
 }
 
-async function loadTemp(file) {
+async function loadTemp(file, createIfMissing = true) {
     try {
         if (!fs.existsSync(file)) {
-            fs.writeFileSync(file, JSON.stringify([]));
+            if (createIfMissing) {
+                fs.writeFileSync(file, JSON.stringify([]));
+                log.info(`${file} created with empty array`);
+            } else {
+                log.warn(`${file} does not exist, returning empty array`);
+            }
             return [];
         }
         const res = fs.readFileSync(file);

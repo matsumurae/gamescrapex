@@ -7,13 +7,13 @@
 
 List of providers:
 
-| Provider   | Status | Last update | Total                |
-| ---------- | ------ | ----------- | -------------------- |
-| 🔥 Fitgirl | ✅     | 3/08/2025   | 5933 (5804 verified) |
-| DODI       | WIP    | —           | —                    |
-| GOG Games  | TODO   | —           | —                    |
-| SteamRIP   | TODO   | —           | —                    |
-| Elamigos   | TODO   | —           | —                    |
+| Provider   | Status | Magnet     | Datanodes | Last update | Total                |
+| ---------- | ------ | ---------- | --------- | ----------- | -------------------- |
+| 🔥 Fitgirl | ✅     | ✅         | ✅        | 3/08/2025   | 5933 (5804 verified) |
+| DODI       | ✅     | ✅ (1337x) | ❌        | 3/08/2025   | 2000                 |
+| GOG Games  | TODO   | —          | —         | —           | —                    |
+| SteamRIP   | TODO   | —          | —         | —           | —                    |
+| Elamigos   | TODO   | —          | —         | —           | —                    |
 
 ## Fitgirl
 

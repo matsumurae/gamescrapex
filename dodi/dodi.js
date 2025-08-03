@@ -9,88 +9,16 @@ const {
     saveProgress,
     saveFile,
     loadFile,
-    configurePage,
-    getPuppeteer,
 } = require("../utils");
 
 const BASE_URL = process.env.BASE_URL;
 const DODI_URL = `${process.env.BASE_URL}/DODI-torrents/page/`;
 const DODI_WEBSITE_URL = `${process.env.DODI_WEBSITE_URL}/all-repacks-a-z-2/`;
 const OUTPUT_FILE = process.env.FILE;
-const TIMEOUT = parseInt(process.env.TIMEOUT) || 60000;
+const TIMEOUT = process.env.TIMEOUT;
 const CACHE_FILE = process.env.CACHE_FILE;
 const PROGRESS_FILE = process.env.PROGRESS_FILE;
-const MAX_RETRIES = 3;
-
-// Bypass DataNodes link
-async function bypassLink(url, browser, attempt = 1) {
-    if (attempt > MAX_RETRIES) {
-        log.error(`Max retries reached for ${url}`);
-        return null;
-    }
-
-    // Check if URL is from lootdest.org or rinku.me
-    if (!url.includes("lootdest.org") && !url.includes("rinku.me")) {
-        log.warn(
-            `URL ${url} is not a valid DataNodes link (lootdest.org or rinku.me)`
-        );
-        return null;
-    }
-
-    const page = await browser.newPage();
-    try {
-        await configurePage(page);
-        await page.goto(url, { waitUntil: "networkidle2", timeout: TIMEOUT });
-        await page.waitForTimeout(3000);
-
-        let finalUrl = await page.evaluate(() => {
-            const link = Array.from(document.querySelectorAll("a")).find((a) =>
-                a.href.includes("datanodes.to")
-            );
-            return link ? link.href : null;
-        });
-
-        if (!finalUrl) {
-            const button = await page.$(
-                'a#proceed, button, a[href*="datanodes.to"]'
-            );
-            if (button) {
-                await button.click();
-                await page
-                    .waitForNavigation({
-                        waitUntil: "networkidle2",
-                        timeout: TIMEOUT,
-                    })
-                    .catch(() => {});
-                finalUrl =
-                    (await page.evaluate(() => {
-                        const link = Array.from(
-                            document.querySelectorAll("a")
-                        ).find((a) => a.href.includes("datanodes.to"));
-                        return link ? link.href : null;
-                    })) || page.url();
-            }
-        }
-
-        await page.close();
-        if (finalUrl && finalUrl.includes("datanodes.to")) {
-            log.info(`Bypassed to: ${finalUrl}`);
-            return finalUrl;
-        }
-        log.warn(
-            `No DataNodes URL for ${url}, retrying (${
-                attempt + 1
-            }/${MAX_RETRIES})`
-        );
-        return await bypassLink(url, browser, attempt + 1);
-    } catch (err) {
-        log.error(`Bypass error for ${url}: ${err.message}`);
-        await page.close();
-        return attempt < MAX_RETRIES
-            ? await bypassLink(url, browser, attempt + 1)
-            : null;
-    }
-}
+const MAX_RETRIES = process.env.MAX_RETRIES;
 
 // Scrape details for a single game link from 1337x
 async function scrapeDetail(link, browser) {
@@ -378,152 +306,6 @@ async function scrapeDodi() {
     }
 }
 
-// Scrape from DODI to get DataNodes
-async function scrapeDodiWebsite(checkDataNodes = false) {
-    const browser = await getPuppeteer(TIMEOUT);
-
-    try {
-        const games = await loadFile(
-            OUTPUT_FILE,
-            `Loading games from ${OUTPUT_FILE}`
-        );
-        let maxId =
-            games.length > 0
-                ? Math.max(...games.map((g) => parseInt(g.id) || 0))
-                : 0;
-
-        const page = await browser.newPage();
-        await configurePage(page);
-        log.info(`Fetching DODI website: ${DODI_WEBSITE_URL}`);
-        await page.goto(DODI_WEBSITE_URL, {
-            waitUntil: "networkidle2",
-            timeout: TIMEOUT,
-        });
-
-        // Step 1: Get all game links from the main page
-        const gameItems = await page.evaluate(() => {
-            const items = Array.from(
-                document.querySelectorAll(".entry-content ul li a")
-            )
-                .map((a) => ({ name: a.textContent.trim(), link: a.href }))
-                .filter((item) => item.name && item.link);
-            return items;
-        });
-
-        if (gameItems.length === 0) {
-            log.warn(`No games found with selector .entry-content ul li a`);
-            await page.close();
-            return;
-        } else {
-            log.info(`Found ${gameItems.length} games on DODI website`);
-        }
-
-        for (const { name, link } of gameItems) {
-            // Normalize name for matching (remove special characters, extra spaces, etc.)
-            const normalizedName = name
-                .toLowerCase()
-                .replace(/[-+]/g, " ")
-                .replace(/\s+/g, " ")
-                .trim();
-
-            // Step 2: Check if game exists in games.json
-            const existingGame = games.find((g) => {
-                const jsonName = g.name
-                    .toLowerCase()
-                    .replace(/[-+]/g, " ")
-                    .replace(/\s+/g, " ")
-                    .trim();
-                return jsonName === normalizedName;
-            });
-
-            if (existingGame) {
-                if (checkDataNodes && !existingGame.datanodes) {
-                    log.info(`Checking DataNodes for existing game: ${name}`);
-                    const datanodes = await scrapeDatanodes(link, browser);
-                    if (datanodes) {
-                        existingGame.datanodes = datanodes;
-                        existingGame.lastChecked = new Date().toISOString();
-                        await saveFile(games, OUTPUT_FILE, {
-                            logMessage: `Updated DataNodes for ${name}`,
-                        });
-                    } else {
-                        log.warn(`No DataNodes link found for ${name}`);
-                    }
-                } else {
-                    log.info(`Found existing: ${name}`);
-                }
-                continue;
-            }
-
-            // Handle new games (if needed)
-            log.info(`Scraping new game: ${name}`);
-            const gameDetails = await scrapeDatanodes(link, browser);
-            if (gameDetails) {
-                const newGame = {
-                    id: ++maxId,
-                    name,
-                    link, // Store DODI link
-                    datanodes: gameDetails,
-                    lastChecked: new Date().toISOString(),
-                };
-                games.push(newGame);
-                await saveFile(newGame, OUTPUT_FILE, {
-                    logMessage: `Saved game ${name} to ${OUTPUT_FILE}`,
-                    isSingleGame: true,
-                });
-            } else {
-                log.warn(`Failed to scrape DataNodes for ${name}`);
-            }
-        }
-
-        log.info("DODI website scraping complete");
-        await page.close();
-    } catch (err) {
-        log.error(`DODI website scraper error: ${err.message}`);
-    } finally {
-        await browser.close();
-        log.info("Browser closed");
-    }
-}
-
-// Updated scrapeDatanodes to only return the DataNodes link
-async function scrapeDatanodes(link, browser) {
-    const page = await browser.newPage();
-    try {
-        await configurePage(page);
-        await page.goto(link, { waitUntil: "networkidle2", timeout: TIMEOUT });
-
-        const result = await page.evaluate(() => {
-            const content = document.querySelector(".entry-content");
-            if (!content) return null;
-
-            const datanodesLink = Array.from(
-                content.querySelectorAll("a")
-            ).find((a) =>
-                a.textContent.trim().toLowerCase().includes("datanodes")
-            )?.href;
-
-            return datanodesLink || null;
-        });
-
-        await page.close();
-
-        if (!result) {
-            log.warn(`No DataNodes link found for ${link}`);
-            return null;
-        }
-
-        // Bypass the DataNodes link (e.g., lootdest.org or rinku.me) to get the final URL
-        const finalDatanodes = await bypassLink(result, browser);
-        log.data(`DataNodes for ${link}: ${finalDatanodes}`);
-        return finalDatanodes;
-    } catch (err) {
-        log.error(`Details error for ${link}: ${err.message}`);
-        await page.close();
-        return null;
-    }
-}
-
 // Count items in games.json
 async function countItems() {
     try {
@@ -568,8 +350,6 @@ if (require.main === module) {
     const args = process.argv.slice(2);
     if (args.includes("--count")) {
         countItems();
-    } else if (args.includes("--datanodes")) {
-        scrapeDodiWebsite(true);
     } else {
         scrapeDodi();
     }

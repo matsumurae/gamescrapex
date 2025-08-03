@@ -13,8 +13,7 @@
         "fitgirl:url": "cd fitgirl && node --no-warnings newest.js --fetch",
         "fitgirl:pages": "cd fitgirl && node --no-warnings newest.js --all",
         "dodi": "cd dodi && node --no-warnings dodi.js",
-        "dodi:count": "cd dodi && node --no-warnings dodi.js --count",
-        "dodi:datanodes": "cd dodi && node --no-warnings dodi.js --datanodes"
+        "dodi:count": "cd dodi && node --no-warnings dodi.js --count"
     },
     "keywords": [],
     "author": "Matsumurae",

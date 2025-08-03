@@ -1,24 +1,52 @@
 require("dotenv").config();
 
-const fs = require("fs");
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const log = require("@vladmandic/pilogger");
+const {
+    fetchHtml,
+    loadCache,
+    saveCache,
+    loadProgress,
+    saveProgress,
+    saveFile,
+    loadFile,
+} = require("../utils");
 
 puppeteer.use(StealthPlugin());
 
-const BASE_URL = "https://1337x.to";
-const START_URL = `${BASE_URL}/DODI-torrents/`;
-const outputFile = "dodi.json";
+const BASE_URL = process.env.BASE_URL;
+const DODI_URL = `${process.env.BASE_URL}/DODI-torrents/page/`;
+const outputFile = process.env.FILE;
 const timeout = parseInt(process.env.TIMEOUT);
+const cacheFile = process.env.CACHE_FILE;
+const progressFile = process.env.PROGRESS_FILE;
 
+// Scrape details for a single game link (unchanged)
 async function scrapeDetail(link, browser) {
     const page = await browser.newPage();
     try {
-        await page.goto(link, {
+        const fullLink = `${BASE_URL}${link}`;
+        log.info(`Fetching details for ${fullLink}`);
+
+        const html = await fetchHtml(fullLink, browser);
+        if (!html) {
+            log.error(`Failed to fetch HTML for ${fullLink}`);
+            await page.close();
+            return null;
+        }
+
+        await page.setContent(html, {
             waitUntil: "domcontentloaded",
             timeout: timeout,
         });
+
+        const descriptionExists = await page.$("#description");
+        if (!descriptionExists) {
+            log.warn(`#description selector not found on ${fullLink}`);
+            await page.close();
+            return null;
+        }
 
         await page.waitForSelector("#description", { timeout: timeout });
 
@@ -28,7 +56,6 @@ async function scrapeDetail(link, browser) {
 
             function relativeTimeToISO(text) {
                 const now = new Date();
-
                 const match = text.match(
                     /(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago/i
                 );
@@ -36,7 +63,6 @@ async function scrapeDetail(link, browser) {
 
                 const value = parseInt(match[1], 10);
                 const unit = match[2];
-
                 const date = new Date(now);
 
                 switch (unit) {
@@ -62,7 +88,6 @@ async function scrapeDetail(link, browser) {
                         date.setFullYear(now.getFullYear() - value);
                         break;
                 }
-
                 return date.toISOString();
             }
 
@@ -96,17 +121,14 @@ async function scrapeDetail(link, browser) {
 
             const publisher = (() => {
                 if (!desc) return [];
-
                 const devMatch = text.match(/Developer\s*:\s*([^\n]+)/i);
                 const pubMatch = text.match(/Publisher\s*:\s*([^\n]+)/i);
-
                 const devs = devMatch
                     ? devMatch[1].split(",").map((s) => s.trim())
                     : [];
                 const pubs = pubMatch
                     ? pubMatch[1].split(",").map((s) => s.trim())
                     : [];
-
                 return [...new Set([...devs, ...pubs])];
             })();
 
@@ -124,15 +146,16 @@ async function scrapeDetail(link, browser) {
             const packed = packedMatch ? `${packedMatch[1]} GB` : null;
             const size = originalMatch ? parseFloat(originalMatch[1]) : null;
 
-            // Get name from <title>
             const fullName = (() => {
                 const title = document.title;
-
-                // Remove "Download " from the beginning and "(From…)" and everything after
-                const cleanTitle = title
-                    .replace(/^Download\s+/i, "")
-                    .replace(/\s*\(From.*$/, "");
-                return cleanTitle.trim();
+                let cleanTitle = title
+                    .replace(/^Download\s+/i, "") // Remove "Download" prefix
+                    .replace(/\s*\(From.*$/, "") // Remove "(From ...)" part
+                    .replace(/\[DODI Repack\]/i, "") // Remove "[DODI Repack]"
+                    .replace(/\s*Torrent\s*\|\s*1337x/i, "") // Remove "Torrent | 1337x"
+                    .replace(/\s+/g, " ") // Normalize multiple spaces
+                    .trim(); // Trim whitespace
+                return cleanTitle;
             })();
 
             return {
@@ -151,131 +174,188 @@ async function scrapeDetail(link, browser) {
         await page.close();
         return result;
     } catch (err) {
+        log.error(`Error in scrapeDetail for ${fullLink}: ${err.message}`);
         await page.close();
-        log.error(`❌ Error in scrapeDetail for ${link}: ${err.message}`);
         return null;
     }
 }
 
+// Main scraping function (unchanged)
 async function scrapeDodi() {
-    log.configure({ inspect: { breakLength: 400 } });
-    log.header("Starting DODI scraper with pagination");
+    const browser = await puppeteer.launch({ headless: true });
+    let games = await loadFile(outputFile);
+    let maxId =
+        games.length > 0
+            ? Math.max(...games.map((g) => parseInt(g.id) || 0))
+            : 0;
+    try {
+        const cache = await loadCache(cacheFile);
+        const totalPages = cache.pages || 1;
+        log.info(`Total pages to scrape: ${totalPages}`);
 
-    const browser = await puppeteer.launch({
-        headless: true,
-        args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        ],
-    });
+        const progress = await loadProgress(progressFile);
+        let lastCheckedPage = progress.lastCheckedIndex || 0;
+        log.info(`Resuming from page ${lastCheckedPage + 1}`);
 
-    let results = [];
-    // Load existing results to check for duplicates
-    if (fs.existsSync(outputFile)) {
-        try {
-            results = JSON.parse(fs.readFileSync(outputFile, "utf8"));
-            log.info(
-                `📂 Loaded ${results.length} existing torrents from ${outputFile}`
-            );
-        } catch (err) {
-            log.error(`❌ Error reading ${outputFile}: ${err.message}`);
-        }
-    }
+        for (
+            let pageNum = lastCheckedPage + 1; // Start from the next page
+            pageNum <= totalPages;
+            pageNum++
+        ) {
+            const url = `${DODI_URL}${pageNum}/`;
+            log.info(`🔎 Fetching page ${pageNum}: ${url}`);
 
-    let pageNum = 1;
-    let hasMorePages = true;
-
-    while (hasMorePages) {
-        const pageUrl = `${START_URL}${pageNum}/`;
-        log.info(`🔎 Loading page ${pageNum}: ${pageUrl}`);
-
-        const page = await browser.newPage();
-        try {
-            const response = await page.goto(pageUrl, {
-                waitUntil: "domcontentloaded",
-                timeout,
-            });
-
-            if (response.status() === 404) {
-                log.info(`🚫 Page ${pageNum} returned 404. Stopping.`);
-                hasMorePages = false;
-                await page.close();
-                break;
+            const html = await fetchHtml(url, browser);
+            if (!html) {
+                log.error(`🚩 Failed to fetch page ${pageNum}`);
+                continue;
             }
 
-            const torrents = await page.$$eval(
-                "table.table-list tbody tr td.name a",
-                (elements) =>
-                    elements
-                        .map((a) => ({
-                            link: a.href,
-                        }))
-                        .filter((t) => t.link.includes("/torrent/"))
-            );
-
-            await page.close();
-
-            if (torrents.length === 0) {
-                log.info(
-                    `🚫 No more torrents found on page ${pageNum}. Stopping…`
+            const page = await browser.newPage();
+            try {
+                await page.setContent(html);
+                const links = await page.$$eval(
+                    "table.table-list tbody tr td.name a",
+                    (elements) =>
+                        elements
+                            .map((a) => a.href)
+                            .filter((href) => href.includes("/torrent/"))
                 );
-                hasMorePages = false;
-                break;
-            }
+                const formattedLinks = links
+                    .map((link) => {
+                        const parts = link.split("/");
+                        const titleSegment = parts[parts.length - 2];
+                        if (!titleSegment) return null;
+                        let gameTitle = titleSegment
+                            .replace(/^\d+-/, "")
+                            .replace(/-/g, " ")
+                            .replace(/DODI Repack$/, "")
+                            .replace(/MULTi\d+/, "")
+                            .replace(/From \d+\.?\d* GB/, "")
+                            .replace(/v\d+\.?\d*\.?\d*/, "")
+                            .replace(/Build \d+/, "")
+                            .replace(/\s+/g, " ")
+                            .trim();
+                        return gameTitle ? `- ${gameTitle}` : null;
+                    })
+                    .filter((title) => title !== null)
+                    .join("\n");
+                log.info(
+                    `Games on page ${pageNum}: \n ${
+                        formattedLinks || "- No games found -"
+                    }`
+                );
+                await page.close();
 
-            log.state(
-                `📦 Found ${torrents.length} torrents on page ${pageNum}`
-            );
-
-            for (let i = 0; i < torrents.length; i++) {
-                const { link } = torrents[i];
-
-                // Check for duplicates
-                if (results.some((result) => result.link === link)) {
-                    log.info(`‼️  Already saved, skipping: ${link}`);
-                    continue;
-                }
-
-                log.state(`🔎 Scraping [${results.length + 1}] ${link}`);
-
-                const detail = await scrapeDetail(link, browser);
-                if (!detail) {
-                    log.warn(
-                        `⚠️  Skipping due to detail scrape failure: ${link}`
+                if (links.length === 0) {
+                    log.info(
+                        `🚫 No torrents found on page ${pageNum}. Continuing…`
                     );
-                    continue;
+                } else {
+                    log.state(
+                        `📦 Found ${links.length} torrents on page ${pageNum}`
+                    );
                 }
 
-                results.push({
-                    id: results.length + 1,
-                    name: detail.fullName,
-                    link,
-                    date: detail.date,
-                    updated: detail.updated,
-                    tags: detail.genre,
-                    publisher: detail.publisher,
-                    original: detail.original,
-                    packed: detail.packed,
-                    size: detail.size,
-                    magnet: detail.magnet,
-                    lastChecked: new Date().toISOString(),
-                });
+                for (const link of links) {
+                    if (games.some((result) => result.link === link)) {
+                        log.info(`‼️ Already saved, skipping: ${link}`);
+                        continue;
+                    }
 
-                // Save incrementally
-                fs.writeFileSync(outputFile, JSON.stringify(results, null, 2));
+                    log.info(`🔎 Scraping [${games.length + 1}] ${link}`);
+                    const gameDetails = await scrapeDetail(link, browser);
+                    if (!gameDetails) {
+                        log.warn(
+                            `⚠️ Skipping due to detail scrape failure: ${link}`
+                        );
+                        continue;
+                    }
+
+                    maxId += 1;
+                    gameDetails.id = maxId;
+                    gameDetails.name = gameDetails.fullName;
+                    gameDetails.link = link;
+                    gameDetails.verified = !!(
+                        gameDetails.magnet && gameDetails.size > 0
+                    );
+                    gameDetails.lastChecked = new Date().toISOString();
+                    games.push(gameDetails);
+                    log.data(`Added ${gameDetails.name}`, { link });
+
+                    await saveFile(gameDetails, outputFile, {
+                        logMessage: `Saved game ${gameDetails.name} to ${outputFile}`,
+                        isSingleGame: true,
+                    });
+                }
+
+                // Save progress after processing the page
+                await saveProgress(progressFile, pageNum);
+            } catch (err) {
+                log.error(`Error processing page ${pageNum}: ${err.message}`);
+                await page.close();
+                continue;
             }
-
-            pageNum++;
-        } catch (err) {
-            log.error(`Failed to process page ${pageNum}: ${err.message}`);
-            await page.close();
-            hasMorePages = false;
         }
-    }
 
-    log.info(`✅ dodi.json saved with ${results.length} torrents total`);
-    await browser.close();
+        cache.lastChecked = new Date().toISOString();
+        await saveCache(cache, cacheFile);
+        log.info("Updated cache with lastChecked timestamp");
+    } catch (err) {
+        log.error(`Error in scrapeDodi: ${err.message}`);
+    } finally {
+        await browser.close();
+        log.info("Browser closed.");
+    }
 }
 
-if (require.main === module) scrapeDodi();
+// New countItems function for games.json
+async function countItems() {
+    try {
+        const games = await loadFile(outputFile);
+        const gamesCount = games.length;
+
+        // Check for duplicates in games.json based on link
+        const seenLinks = new Set();
+        const duplicates = games.filter((game) => {
+            if (seenLinks.has(game.link)) return true;
+            seenLinks.add(game.link);
+            return false;
+        });
+
+        if (duplicates.length > 0) {
+            log.warn(
+                `Found ${duplicates.length} duplicates in ${outputFile}`,
+                duplicates
+            );
+        } else {
+            log.info(`No duplicates found in ${outputFile}`);
+        }
+
+        log.data(
+            `🔥 Found ${gamesCount} games and ${duplicates.length} duplicates`
+        );
+
+        return {
+            gamesCount,
+            duplicatesCount: duplicates.length,
+        };
+    } catch (err) {
+        log.error(`⚠️  Count items failed. Error: ${err.message}`);
+        return {
+            gamesCount: 0,
+            uniqueCount: 0,
+            duplicatesCount: 0,
+        };
+    }
+}
+
+// Handle command-line arguments
+if (require.main === module) {
+    const args = process.argv.slice(2);
+    if (args.includes("--count")) {
+        countItems();
+    } else {
+        scrapeDodi();
+    }
+}

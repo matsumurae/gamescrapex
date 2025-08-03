@@ -15,19 +15,23 @@ const { details } = require("./utils");
 // Command-line arguments
 const argv = yargs
     .option("start-index", {
+        alias: "s",
         type: "number",
         default: 1,
         description: "Starting page index",
     })
     .option("all", {
+        alias: "a",
         type: "boolean",
         default: false,
         description: "Scrape all A-Z content",
     })
     .option("fetch", {
+        alias: "f",
         type: "string",
         description: "Fetch details for a specific game by name or link",
-    }).argv;
+    })
+    .help().argv;
 
 // Configurable
 const baseUrl = process.env.BASE_URL;

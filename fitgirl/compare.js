@@ -1,8 +1,10 @@
-// Compare script for FitGirl repacks
-// This script compares the current game database with a complete list of games,
-// updates the database with new games, and fetches details for each game using Puppeteer.
 require("dotenv").config();
 
+const puppeteer = require("puppeteer-extra");
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+puppeteer.use(StealthPlugin());
+
+const yargs = require("yargs");
 const fs = require("fs");
 const log = require("@vladmandic/pilogger");
 const {
@@ -23,6 +25,22 @@ const tempFile = process.env.TEMP_FILE;
 const maxRetries = parseInt(process.env.MAX_RETRIES);
 const retryDelay = parseInt(process.env.RETRY_DELAY);
 const timeout = parseInt(process.env.TIMEOUT);
+
+// Parse command-line arguments with yargs
+const argv = yargs
+    .option("count-items", {
+        alias: "c",
+        type: "boolean",
+        description: "Count items in games.json, complete.json, and temp.json",
+        default: false,
+    })
+    .option("check", {
+        alias: "k",
+        type: "boolean",
+        description: "Check for redirects and clean games.json",
+        default: false,
+    })
+    .help().argv;
 
 async function loadComplete() {
     const completeFile = "complete.json";
@@ -323,7 +341,6 @@ async function main() {
         process.exit(1);
     }
 
-    const args = process.argv.slice(2);
     const browser = await getPuppeteer(timeout);
 
     try {
@@ -332,7 +349,7 @@ async function main() {
         const cache = await loadCache(cacheFile);
 
         // Check for redirects and clean games.json only if --check is provided
-        if (args.includes("--check")) {
+        if (argv.check) {
             games = await checkRedirectsAndClean(browser);
             log.info(
                 `After redirect check, ${games.length} games remain in games.json`
@@ -365,9 +382,15 @@ async function main() {
 }
 
 if (require.main === module) {
-    const args = process.argv.slice(2);
-    if (args.includes("--count-items")) {
+    if (argv.countItems) {
         countItems().then(() => process.exit());
+    } else if (argv.check) {
+        (async () => {
+            const browser = await getPuppeteer(timeout);
+            await checkRedirectsAndClean(browser);
+            await browser.close();
+            process.exit();
+        })();
     } else {
         main();
     }

@@ -32,6 +32,7 @@ TIMEOUT=30000
 | Script          | Description                                                                                     |
 | --------------- | ----------------------------------------------------------------------------------------------- |
 | fitgirl:compare | Updates and cleans a game database by comparing lists, scraping details, and handling redirects |
+| fitgirl:check   | Check if any games isn't on games.json but on complete.json. Checking if it has redirects.      |
 | fitgirl:count   | loads, counts, finds duplicates and differences between them and shows a summary                |
 | fitgirl:find    | Searches a game JSON file for a term or shows newest and largest games, then logs the results   |
 | fitgirl:update  | Checks and updates game dates and links by comparing JSON data with website using Puppeteer.    |

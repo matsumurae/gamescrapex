@@ -10,6 +10,7 @@ async function configurePage(page) {
     await page.setUserAgent(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
     );
+
     await page.setExtraHTTPHeaders({
         "Accept-Language": "en-US,en;q=0.9",
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
@@ -19,16 +20,37 @@ async function configurePage(page) {
         "Sec-Fetch-User": "?1",
         "Sec-Fetch-Dest": "document",
     });
-    // Optional: Emulate a real browser viewport
+
     await page.setViewport({ width: 1366, height: 768 });
-    // Optional: Disable WebGL and other features that might trigger detection
+
     await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, "webdriver", {
+            get: () => false,
+        });
+
+        Object.defineProperty(navigator, "language", {
+            get: () => "en-US",
+        });
+        Object.defineProperty(navigator, "languages", {
+            get: () => ["en-US", "en"],
+        });
+
+        Object.defineProperty(navigator, "plugins", {
+            get: () => [1, 2, 3, 4, 5],
+        });
+
         const getParameter = WebGLRenderingContext.prototype.getParameter;
         WebGLRenderingContext.prototype.getParameter = function (parameter) {
             if (parameter === 37445) return "Intel";
             if (parameter === 37446) return "Intel Iris OpenGL Engine";
-            return getParameter(parameter);
+            return getParameter.call(this, parameter);
         };
+
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) =>
+            parameters.name === "notifications"
+                ? Promise.resolve({ state: Notification.permission })
+                : originalQuery(parameters);
     });
 }
 
@@ -160,180 +182,118 @@ async function saveFile(data, file, options = {}) {
             );
         }
     } catch (err) {
-        log.error(`⚠️ Save ${file} failed. Error: ${err.message}`);
+        log.error(`⚠️ Save file ${file} failed. Error: ${err.message}`);
     }
 }
 
-// Fetch detailed game information from a game's page
-async function details(game, browser) {
-    let page = null;
-
+async function loadCache(file) {
     try {
-        page = await browser.newPage();
-        await configurePage(page);
-
-        // Retry navigation on timeout or specific errors
-        let attempt = 1;
-        while (attempt <= maxRetries) {
-            try {
-                await page.goto(game.link, {
-                    waitUntil: "domcontentloaded",
-                    timeout,
-                });
-                break;
-            } catch (err) {
-                if (
-                    err.message.includes("Navigation timeout") ||
-                    err.message.includes("net::ERR_CONNECTION_REFUSED") ||
-                    err.message.includes("net::ERR_CONNECTION_RESET")
-                ) {
-                    log.warn(
-                        `Navigation attempt failed for ${game.name}. Error: ${err.message}`
-                    );
-                    if (attempt === maxRetries) {
-                        log.error(`All retries failed for ${game.name}`);
-                        await page.close();
-                        return [game, false];
-                    }
-                    log.info(
-                        `Retrying ${game.name} (attempt ${
-                            attempt + 1
-                        }/${maxRetries})`
-                    );
-                    await new Promise((resolve) =>
-                        setTimeout(resolve, retryDelay)
-                    );
-                    attempt++;
-                } else {
-                    throw err;
-                }
-            }
+        if (!fs.existsSync(file)) {
+            log.warn(`${file} does not exist, creating empty file…`);
+            const defaultCache = {
+                pages: 0,
+                lastChecked: new Date().toISOString(),
+            };
+            fs.writeFileSync(file, JSON.stringify(defaultCache, null, 2));
+            return defaultCache;
         }
-
-        const date = await page.evaluate(() => {
-            const dateEl = document.querySelector("time.entry-date");
-            return dateEl?.getAttribute("datetime") || null;
-        });
-        game.date = date ? new Date(date) : new Date();
-
-        const contentText = await page.evaluate(() => {
-            const content = document.querySelector(
-                ".entry-content, .post-content, article, .content"
-            );
-            return content
-                ? content.textContent.replace(/\n+/g, "\n").split("\n")
-                : [];
-        });
-        if (!contentText.length) {
-            log.warn("details: no content found", {
-                id: game.id,
-                game: game.name,
-            });
-            await page.close();
-            return [game, false];
-        }
-
-        for (const line of contentText) {
-            if (line.match(/genres|tags/i))
-                game.tags = line
-                    .replace(/.*:/, "")
-                    .trim()
-                    .split(", ")
-                    .filter(Boolean);
-            if (line.match(/compan(y|ies)/i))
-                game.creator = line
-                    .replace(/.*compan(y|ies).*?:/i, "")
-                    .trim()
-                    .split(", ")
-                    .filter(Boolean);
-            if (line.match(/original size/i))
-                game.original = line.replace(/.*original size.*?:/i, "").trim();
-            if (line.match(/repack size/i))
-                game.packed = line
-                    .replace(/.*repack size.*?:/i, "")
-                    .replace(/\[.*\]/, "")
-                    .trim();
-        }
-
-        const packed = game.packed
-            ? Number(
-                  game.packed.replace(",", ".").match(/(\d+(\.\d+)?)/)?.[0] || 0
-              )
-            : 0;
-        const original = game.original
-            ? Number(
-                  game.original.replace(",", ".").match(/(\d+(\.\d+)?)/)?.[0] ||
-                      0
-              )
-            : 0;
-        game.size = Math.max(packed, original);
-        if (game?.size > 0 && game.original?.includes("MB")) game.size /= 1024;
-
-        game.direct = await page.evaluate(() => {
-            const directLinks = {};
-            const ddl = Array.from(document.querySelectorAll("h3")).find((el) =>
-                el.textContent.includes("Download Mirrors (Direct Links)")
-            );
-            if (ddl) {
-                const ul =
-                    Array.from(ddl.parentElement.children).find(
-                        (el) => el.tagName === "UL" && el !== ddl
-                    ) || null;
-                if (ul) {
-                    const items = ul.querySelectorAll("li");
-                    for (const item of items) {
-                        const text = item.textContent.toLowerCase();
-                        let host = null;
-                        if (text.includes("datanodes")) {
-                            host = "datanodes";
-                        } else if (text.includes("fuckingfast")) {
-                            host = "fuckingfast";
-                        }
-                        if (host) {
-                            directLinks[host] = directLinks[host] || [];
-                            const spoilerContent = item.querySelector(
-                                ".su-spoiler-content"
-                            );
-                            if (spoilerContent) {
-                                const spoilerLinks = Array.from(
-                                    spoilerContent.querySelectorAll("a")
-                                ).map((a) => a.href);
-                                directLinks[host].push(...spoilerLinks);
-                            }
-                        }
-                    }
-                }
-            }
-            return directLinks;
-        });
-
-        const magnet = await page.evaluate(() => {
-            const href = document.querySelector('a[href*="magnet"]');
-            return href ? href.getAttribute("href") : null;
-        });
-        if (magnet) game.magnet = magnet;
-
-        // Set verified to true only if both magnet and size > 0 exist
-        game.verified = !!(game.magnet && game.size > 0);
-        game.lastChecked = new Date().toISOString();
-
-        log.data(`${game.name} added.`, {
-            link: game.link,
-            size: game.size,
-            direct: game.direct,
-            magnet: game.magnet,
-        });
-
-        await page.close();
-        return [game, game.verified];
+        const res = fs.readFileSync(file);
+        const cache = JSON.parse(res);
+        log.data(
+            `Cache loaded. ${new Date(
+                cache.lastChecked
+            ).toLocaleString()} last checked.`
+        );
+        return cache;
     } catch (err) {
-        log.warn("details error", {
-            id: game.id,
-            game: game.name,
-            error: err.message,
-        });
-        if (page) await page.close();
-        return [game, false];
+        log.error(`⚠️ Failed to load ${cacheFile}. Error: ${err.message}`);
+        return { pages: 0, lastChecked: new Date().toISOString() };
+    }
+}
+
+async function saveCache(data, file) {
+    try {
+        const json = JSON.stringify(data, null, 2);
+        fs.writeFileSync(file, json);
+        log.data(`✅ Saved cache on ${file}!`);
+    } catch (err) {
+        log.error(`⚠️ Failed to load ${file}. Error: ${err.message}`);
+    }
+}
+
+// Load progress from JSON
+async function loadProgress(file) {
+    try {
+        if (!fs.existsSync(file)) {
+            log.warn(
+                "loadProgress: progress file does not exist, starting from 1"
+            );
+            const defaultProgress = {
+                lastCheckedIndex: 1,
+            };
+            fs.writeFileSync(file, JSON.stringify(defaultProgress, null, 2));
+            return defaultProgress;
+        }
+        const res = fs.readFileSync(file);
+        const data = JSON.parse(res);
+        log.data(
+            `🌀 Loading progress… Last checked was ${data.lastCheckedIndex}`
+        );
+        return data;
+    } catch (err) {
+        log.error(`⚠️ Failed to load ${progressFile}. Error: ${err.message}`);
+        return { lastCheckedIndex: 0 };
+    }
+}
+
+// Save progress to JSON
+async function saveProgress(file, index) {
+    try {
+        const json = JSON.stringify({ lastCheckedIndex: index }, null, 2);
+        fs.writeFileSync(file, json);
+        log.data(`✅ Saving progress. Last check: ${index}`);
+    } catch (err) {
+        log.error(`⚠️ Save progress ${file} failed. Error: ${err.message}`);
+    }
+}
+
+async function loadTemp(file) {
+    try {
+        if (!fs.existsSync(file)) {
+            fs.writeFileSync(file, JSON.stringify([]));
+            return [];
+        }
+        const res = fs.readFileSync(file);
+        const data = JSON.parse(res);
+        return data;
+    } catch (err) {
+        log.error(`⚠️ Failed to load ${file}. Error: ${err.message}`);
+        return [];
+    }
+}
+
+async function saveTemp(games, file) {
+    try {
+        if (!games || games.length === 0) {
+            await deleteTemp();
+            return;
+        }
+        const json = JSON.stringify(games, null, 2);
+        fs.writeFileSync(file, json);
+        log.data(`Checked games. Remaining ${games.length} games`);
+    } catch (err) {
+        log.error(`⚠️ Save temp ${file} failed. Error: ${err.message}`);
+    }
+}
+
+async function deleteTemp(file) {
+    try {
+        if (fs.existsSync(file)) {
+            fs.unlinkSync(file);
+            log.info(`Deleted ${file}`);
+        }
+    } catch (err) {
+        log.error(`⚠️ Failed to delete ${file}. Error: ${err.message}`);
     }
 }
 
@@ -342,5 +302,11 @@ module.exports = {
     fetchHtml,
     loadFile,
     saveFile,
-    details,
+    saveCache,
+    loadCache,
+    loadProgress,
+    saveProgress,
+    saveTemp,
+    loadTemp,
+    deleteTemp,
 };

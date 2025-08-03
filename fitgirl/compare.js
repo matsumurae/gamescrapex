@@ -7,7 +7,16 @@ const fs = require("fs");
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const log = require("@vladmandic/pilogger");
-const { saveFile, loadFile, details } = require("../utils");
+const {
+    saveFile,
+    loadFile,
+    loadCache,
+    saveCache,
+    loadTemp,
+    saveTemp,
+    deleteTemp,
+} = require("../utils");
+const { details } = require("./utils");
 
 puppeteer.use(StealthPlugin());
 
@@ -17,41 +26,6 @@ const tempFile = process.env.TEMP_FILE;
 const maxRetries = parseInt(process.env.MAX_RETRIES);
 const retryDelay = parseInt(process.env.RETRY_DELAY);
 const timeout = parseInt(process.env.TIMEOUT);
-
-async function loadCache() {
-    try {
-        if (!fs.existsSync(cacheFile)) {
-            log.warn(`${cacheFile} does not exist, creating empty file…`);
-            const defaultCache = {
-                pages: 0,
-                lastChecked: new Date().toISOString(),
-            };
-            fs.writeFileSync(cacheFile, JSON.stringify(defaultCache, null, 2));
-            return defaultCache;
-        }
-        const res = fs.readFileSync(cacheFile);
-        const cache = JSON.parse(res);
-        log.data(
-            `Cache loaded. ${new Date(
-                cache.lastChecked
-            ).toLocaleString()} last checked.`
-        );
-        return cache;
-    } catch (err) {
-        log.error(`⚠️ Failed to load ${cacheFile}. Error: ${err.message}`);
-        return { pages: 0, lastChecked: new Date().toISOString() };
-    }
-}
-
-async function saveCache(cache) {
-    try {
-        const json = JSON.stringify(cache, null, 2);
-        fs.writeFileSync(cacheFile, json);
-        log.data(`✅ Saved cache on ${cacheFile}!`);
-    } catch (err) {
-        log.error(`⚠️ Failed to load ${cacheFile}. Error: ${err.message}`);
-    }
-}
 
 async function loadComplete() {
     const completeFile = "complete.json";
@@ -74,51 +48,11 @@ async function loadComplete() {
     }
 }
 
-async function loadTemp() {
-    try {
-        if (!fs.existsSync(tempFile)) {
-            fs.writeFileSync(tempFile, JSON.stringify([]));
-            return [];
-        }
-        const res = fs.readFileSync(tempFile);
-        const data = JSON.parse(res);
-        return data;
-    } catch (err) {
-        log.error(`⚠️ Failed to load ${tempFile}. Error: ${err.message}`);
-        return [];
-    }
-}
-
-async function saveTemp(games) {
-    try {
-        if (!games || games.length === 0) {
-            await deleteTemp();
-            return;
-        }
-        const json = JSON.stringify(games, null, 2);
-        fs.writeFileSync(tempFile, json);
-        log.data(`Checked games. Remaining ${games.length} games`);
-    } catch (err) {
-        log.error(`⚠️ Save ${tempFile} failed. Error: ${err.message}`);
-    }
-}
-
-async function deleteTemp() {
-    try {
-        if (fs.existsSync(tempFile)) {
-            fs.unlinkSync(tempFile);
-            log.info(`Deleted ${tempFile}`);
-        }
-    } catch (err) {
-        log.error(`⚠️ Failed to delete ${tempFile}. Error: ${err.message}`);
-    }
-}
-
 async function checkGames(games) {
     const completeGames = await loadComplete();
     const existingGames = await loadFile(file);
     let newGamesCount = 0;
-    let tempGames = await loadTemp();
+    let tempGames = await loadTemp(tempFile);
 
     // Create a Set of normalized links from games.json
     const existingLinks = new Set(existingGames.map((game) => game.link));
@@ -149,7 +83,7 @@ async function checkGames(games) {
     }
 
     if (newGamesCount > 0) {
-        await saveTemp(tempGames);
+        await saveTemp(tempGames, tempFile);
         log.info(`Saved ${newGamesCount} new games to ${tempFile}`);
     }
 
@@ -161,10 +95,10 @@ async function checkGames(games) {
 }
 
 async function processTempGames(games, browser) {
-    let tempGames = await loadTemp();
+    let tempGames = await loadTemp(tempFile);
     if (tempGames.length === 0) {
         log.info("No games to process in temp.json");
-        await deleteTemp();
+        await deleteTemp(tempFile);
         return games;
     }
 
@@ -220,11 +154,11 @@ async function processTempGames(games, browser) {
 
         tempGames.splice(i, 1);
         i--;
-        await saveTemp(tempGames);
+        await saveTemp(tempGames, tempFile);
     }
 
     if (tempGames.length === 0) {
-        await deleteTemp();
+        await deleteTemp(tempFile);
     }
 
     return games;
@@ -310,7 +244,7 @@ async function countItems() {
         const gamesCount = games.length;
         const completeGames = await loadComplete();
         const completeCount = completeGames.length;
-        const tempGames = await loadTemp();
+        const tempGames = await loadTemp(tempFile);
         const tempCount = tempGames.length;
         const gamesLinks = new Set(games.map((game) => game.link));
         const completeLinks = new Set(completeGames.map((game) => game.link));
@@ -392,6 +326,7 @@ async function main() {
         process.exit(1);
     }
 
+    const args = process.argv.slice(2);
     const browser = await puppeteer.launch({
         headless: true,
         args: [
@@ -407,15 +342,21 @@ async function main() {
     try {
         let games = await loadFile(file);
         log.info(`Loaded ${games.length} games from ${file}`);
-        const cache = await loadCache();
+        const cache = await loadCache(cacheFile);
 
-        // Check for redirects and clean games.json
-        games = await checkRedirectsAndClean(browser);
-        log.info(
-            `After redirect check, ${games.length} games remain in games.json`
-        );
+        // Check for redirects and clean games.json only if --check is provided
+        if (args.includes("--check")) {
+            games = await checkRedirectsAndClean(browser);
+            log.info(
+                `After redirect check, ${games.length} games remain in games.json`
+            );
+        } else {
+            log.info(
+                "Skipping redirect check as --check argument was not provided"
+            );
+        }
 
-        let tempGames = await loadTemp();
+        let tempGames = await loadTemp(tempFile);
         let finalGames;
 
         if (tempGames.length === 0) {
@@ -430,7 +371,7 @@ async function main() {
         }
 
         cache.lastChecked = new Date().toISOString();
-        await saveCache(cache);
+        await saveCache(cache, cacheFile);
     } finally {
         await browser.close();
     }
@@ -444,8 +385,6 @@ if (require.main === module) {
         main();
     }
 } else {
-    exports.loadCache = loadCache;
-    exports.saveCache = saveCache;
     exports.countItems = countItems;
     exports.loadTemp = loadTemp;
     exports.saveTemp = saveTemp;

@@ -5,13 +5,8 @@ const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const log = require("@vladmandic/pilogger");
 const yargs = require("yargs");
-const {
-    configurePage,
-    fetchHtml,
-    loadFile,
-    saveFile,
-    details,
-} = require("../utils");
+const { configurePage, fetchHtml, loadFile, saveFile } = require("../utils");
+const { details } = require("./utils");
 
 // Add stealth plugin to Puppeteer
 puppeteer.use(StealthPlugin());
@@ -111,17 +106,15 @@ async function scrapeNewestGames(browser, attempt = 1) {
     try {
         page = await browser.newPage();
         let currentPageUrl = baseUrl;
-        let hasNextPage = true;
 
         log.data(`Starting scraping new games… Wait a moment…`);
 
         await configurePage(page);
 
-        while (hasNextPage) {
-            // Navigate to the current page with retry logic
+        while (true) {
             try {
                 await page.goto(currentPageUrl, {
-                    waitUntil: "networkidle2",
+                    waitUntil: "domcontentloaded",
                     timeout: timeout,
                 });
                 await new Promise((resolve) => setTimeout(resolve, retryDelay));
@@ -134,7 +127,7 @@ async function scrapeNewestGames(browser, attempt = 1) {
                     log.warn(
                         `Navigation attempt failed for ${currentPageUrl}. Error: ${err.message}`
                     );
-                    if (attempt === maxRetries) {
+                    if (attempt >= maxRetries) {
                         log.error(`All retries failed for ${currentPageUrl}`);
                         await page.close();
                         return;
@@ -143,12 +136,10 @@ async function scrapeNewestGames(browser, attempt = 1) {
                         `Retrying ${currentPageUrl} (attempt ${
                             attempt + 1
                         }/${maxRetries})`,
-                        {
-                            currentPageUrl,
-                        }
+                        { currentPageUrl }
                     );
                     await new Promise((resolve) =>
-                        setTimeout(resolve, retryDelay)
+                        setTimeout(resolve, retryDelay * (attempt + 1))
                     );
                     await page.close();
                     return scrapeNewestGames(browser, attempt + 1);
@@ -166,17 +157,25 @@ async function scrapeNewestGames(browser, attempt = 1) {
                         const time = article.querySelector("time.entry-date");
                         const titleLink =
                             article.querySelector(".entry-title > a");
-                        log.data(`New game ${titleLink?.textContent.trim()}`);
                         return {
                             timestamp: time?.getAttribute("datetime"),
                             name: titleLink?.textContent.trim(),
                             link: titleLink?.href,
                         };
                     })
-                    .filter((item) => item.timestamp && item.name && item.link);
+                    .filter(
+                        (item) =>
+                            item.timestamp &&
+                            item.name &&
+                            item.link &&
+                            !item.name.toUpperCase().startsWith("UPDATE")
+                    );
             });
 
-            // Check if the first article's timestamp is older than lastChecked
+            log.data(
+                `🔥 Found ${articles.length} games on page ${currentPageUrl}`
+            );
+
             const lastChecked = new Date(cache.lastChecked);
             if (
                 articles.length > 0 &&
@@ -188,11 +187,6 @@ async function scrapeNewestGames(browser, attempt = 1) {
                 break;
             }
 
-            log.data(
-                `🔥 Found ${articles.length} games on page ${currentPageUrl}`
-            );
-
-            // Load existing games from games.json
             const existingGames = await loadFile(file);
             const existingLinks = new Set(
                 existingGames.map((game) => game.link)
@@ -202,7 +196,6 @@ async function scrapeNewestGames(browser, attempt = 1) {
                     ? Math.max(...existingGames.map((g) => g.id))
                     : 0;
 
-            // Step 3: Filter articles newer than cache.lastChecked
             const newArticles = articles.filter(
                 (article) => new Date(article.timestamp) > lastChecked
             );
@@ -213,7 +206,6 @@ async function scrapeNewestGames(browser, attempt = 1) {
                 } new games since ${lastChecked.toISOString()} on page ${currentPageUrl}`
             );
 
-            // Process new games
             for (const { name, link, timestamp } of newArticles) {
                 if (!existingLinks.has(link)) {
                     const game = {
@@ -224,16 +216,27 @@ async function scrapeNewestGames(browser, attempt = 1) {
                     };
                     log.info(`🔎 Found new game: ${game.name} (${game.link})`);
 
-                    // Fetch details using the shared details function
                     const [updatedGame, verified] = await details(
                         game,
                         browser
                     );
+                    // Log updatedGame for debugging
+                    log.debug(`Details for ${game.name}`, {
+                        updatedGame,
+                        verified,
+                    });
+
+                    // Check if updatedGame.direct is an object before accessing
+                    const hasValidDirectLinks =
+                        updatedGame.direct &&
+                        typeof updatedGame.direct === "object" &&
+                        Object.keys(updatedGame.direct).length > 0;
+
                     if (
                         verified ||
                         updatedGame.size > 0 ||
                         updatedGame.magnet ||
-                        Object.keys(updatedGame.direct).length > 0
+                        hasValidDirectLinks
                     ) {
                         const newGame = {
                             id: updatedGame.id,
@@ -266,7 +269,6 @@ async function scrapeNewestGames(browser, attempt = 1) {
                 }
             }
 
-            // Check for next page
             const nextPageLink = await page.evaluate(() => {
                 const nextButton = document.querySelector(".pagination .next");
                 return nextButton ? nextButton.href : null;
@@ -277,11 +279,10 @@ async function scrapeNewestGames(browser, attempt = 1) {
                 currentPageUrl = nextPageLink;
             } else {
                 log.info("🛑 No next page found, stopping pagination");
-                hasNextPage = false;
+                break;
             }
         }
 
-        // Update lastChecked timestamp
         cache.lastChecked = new Date().toISOString();
         fs.writeFileSync(cacheFile, JSON.stringify(cache, null, 2));
         log.info(`⚡️ Updated lastChecked to ${cache.lastChecked}`);
@@ -310,82 +311,79 @@ async function scrapeAll() {
         protocolTimeout: 60000,
     });
 
-    try {
-        // Update cache page count
-        const cachedNumPages = await updateCachePageCount(browser);
+    // Update cache page count
+    const cachedNumPages = await updateCachePageCount(browser);
 
-        let startPage = loadState();
-        let id = 1;
-        let games = [];
-        if (fs.existsSync("complete.json")) {
-            games = JSON.parse(fs.readFileSync("complete.json", "utf8"));
-            id = games.length > 0 ? Math.max(...games.map((g) => g.id)) + 1 : 1;
-        }
-
-        // Iterate through all pages starting from startPage
-        for (let pageNum = startPage; pageNum <= cachedNumPages; pageNum++) {
-            const pageUrl = `${fullUrl}/?lcp_page0=${pageNum}#lcp_instance_0`;
-            const content = await fetchHtml(pageUrl, browser);
-            if (!content) {
-                log.error("No content fetched for page", { pageNum });
-                continue;
-            }
-
-            const page = await browser.newPage();
-            try {
-                await configurePage(page);
-                await page.goto(pageUrl, {
-                    waitUntil: "networkidle2",
-                    timeout: timeout,
-                });
-                await new Promise((resolve) => setTimeout(resolve, retryDelay));
-
-                // Extract games
-                const gamesElements = await page.evaluate(() => {
-                    const list = document.querySelector("ul.lcp_catlist");
-                    if (!list) return [];
-                    const items = list.querySelectorAll("li a");
-                    return Array.from(items)
-                        .map((a) => ({
-                            name: a.textContent.trim(),
-                            link: a.href,
-                        }))
-                        .filter((item) => item.name && item.link);
-                });
-
-                log.data(
-                    `🔥 Scraped page ${pageNum} with ${gamesElements.length} games`
-                );
-
-                // Process each game individually
-                for (const { name, link } of gamesElements) {
-                    const game = {
-                        id: id++,
-                        name,
-                        link,
-                        page: pageNum,
-                    };
-                    log.info(`🔎 Found game: ${game.name}`);
-                    await saveFile(game, "complete.json", {
-                        isSingleGame: true,
-                    });
-                }
-
-                await saveState(pageNum + 1);
-                await page.close();
-            } catch (err) {
-                log.error("Page processing failed", {
-                    pageNum,
-                    error: err.message,
-                });
-                await page.close();
-            }
-        }
-
-        log.data(`🔥 Scraping complete!`);
-    } finally {
-        await browser.close();
+    let startPage = loadState();
+    let id = 1;
+    let games = [];
+    if (fs.existsSync("complete.json")) {
+        games = JSON.parse(fs.readFileSync("complete.json", "utf8"));
+        id = games.length > 0 ? Math.max(...games.map((g) => g.id)) + 1 : 1;
     }
+
+    // Iterate through all pages starting from startPage
+    for (let pageNum = startPage; pageNum <= cachedNumPages; pageNum++) {
+        const pageUrl = `${fullUrl}/?lcp_page0=${pageNum}#lcp_instance_0`;
+        const content = await fetchHtml(pageUrl, browser);
+        if (!content) {
+            log.error("No content fetched for page", { pageNum });
+            continue;
+        }
+
+        const page = await browser.newPage();
+        try {
+            await configurePage(page);
+            await page.goto(pageUrl, {
+                waitUntil: "networkidle2",
+                timeout: timeout,
+            });
+            await new Promise((resolve) => setTimeout(resolve, retryDelay));
+
+            // Extract games
+            const gamesElements = await page.evaluate(() => {
+                const list = document.querySelector("ul.lcp_catlist");
+                if (!list) return [];
+                const items = list.querySelectorAll("li a");
+                return Array.from(items)
+                    .map((a) => ({
+                        name: a.textContent.trim(),
+                        link: a.href,
+                    }))
+                    .filter((item) => item.name && item.link);
+            });
+
+            log.data(
+                `🔥 Scraped page ${pageNum} with ${gamesElements.length} games`
+            );
+
+            // Process each game individually
+            for (const { name, link } of gamesElements) {
+                const game = {
+                    id: id++,
+                    name,
+                    link,
+                    page: pageNum,
+                };
+                log.info(`🔎 Found game: ${game.name}`);
+                await saveFile(game, "complete.json", {
+                    isSingleGame: true,
+                });
+            }
+
+            await saveState(pageNum + 1);
+            await page.close();
+        } catch (err) {
+            log.error("Page processing failed", {
+                pageNum,
+                error: err.message,
+            });
+            await page.close();
+        }
+    }
+
+    log.data(`🔥 Scraping complete!`);
+    await browser.close();
 }
 
 // Main execution
@@ -399,6 +397,8 @@ async function main() {
             "--no-sandbox",
             "--disable-setuid-sandbox",
             "--ignore-certificate-errors",
+            "--disable-gpu", // Disable GPU for compatibility
+            "--disable-dev-shm-usage", // Avoid shared memory issues
         ],
     });
 

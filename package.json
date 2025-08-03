@@ -5,11 +5,13 @@
     "main": "index.js",
     "scripts": {
         "fitgirl:compare": "cd fitgirl && node --no-warnings compare.js",
+        "fitgirl:check": "cd fitgirl && node --no-warnings compare.js --check",
         "fitgirl:count": "cd fitgirl && node --no-warnings compare.js --count-items",
         "fitgirl:find": "cd fitgirl && node --no-warnings find.js",
         "fitgirl:update": "cd fitgirl && node --no-warnings update.js",
         "fitgirl:newest": "cd fitgirl && node --no-warnings newest.js",
-        "fitgirl:pages": "cd fitgirl && node --no-warnings newest.js --all"
+        "fitgirl:pages": "cd fitgirl && node --no-warnings newest.js --all",
+        "dodi": "cd dodi && node --no-warnings dodi.js"
     },
     "keywords": [],
     "author": "Matsumurae",

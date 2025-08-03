@@ -5,7 +5,13 @@ const fs = require("fs");
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const log = require("@vladmandic/pilogger");
-const { fetchHtml, loadFile, saveFile } = require("../utils");
+const {
+    fetchHtml,
+    loadFile,
+    saveFile,
+    loadProgress,
+    saveProgress,
+} = require("../utils");
 
 puppeteer.use(StealthPlugin());
 
@@ -14,46 +20,13 @@ const retryDelay = parseInt(process.env.RETRY_DELAY);
 const progressFile = "progress.json";
 const file = process.env.FILE;
 
-// Load progress from JSON
-async function loadProgress() {
-    try {
-        if (!fs.existsSync(progressFile)) {
-            log.warn(
-                "loadProgress: progress file does not exist, starting from 0",
-                { progressFile }
-            );
-            return { lastCheckedIndex: 0 };
-        }
-        const res = fs.readFileSync(progressFile);
-        const data = JSON.parse(res);
-        log.data(
-            `🌀 Loading progress… Last checked was ${data.lastCheckedIndex}`
-        );
-        return data;
-    } catch (err) {
-        log.error(`⚠️ Failed to load ${progressFile}. Error: ${err.message}`);
-        return { lastCheckedIndex: 0 };
-    }
-}
-
-// Save progress to JSON
-async function saveProgress(index) {
-    try {
-        const json = JSON.stringify({ lastCheckedIndex: index }, null, 2);
-        fs.writeFileSync(progressFile, json);
-        log.data(`✅ Saving progress. Last check: ${index}`);
-    } catch (err) {
-        log.error(`⚠️ Save ${progressFile} failed. Error: ${err.message}`);
-    }
-}
-
 async function checkTimestampsAgainstWebsite(
     fix = false,
     attempt = 1,
     startIndex = null
 ) {
     const games = await loadFile(file);
-    const progress = await loadProgress();
+    const progress = await loadProgress(progressFile);
     let startFrom =
         startIndex !== null ? startIndex : progress.lastCheckedIndex;
     if (startFrom >= games.length) {
@@ -62,7 +35,7 @@ async function checkTimestampsAgainstWebsite(
             totalGames: games.length,
         });
         startFrom = 0;
-        await saveProgress(0);
+        await saveProgress(progressFile, 0);
     }
 
     let mismatchCount = 0;
@@ -89,7 +62,7 @@ async function checkTimestampsAgainstWebsite(
 
             if (game.lastChecked && game.lastChecked.split("T")[0] === today) {
                 skippedCount++;
-                await saveProgress(i + 1);
+                await saveProgress(progressFile, i + 1);
                 continue;
             }
 
@@ -111,7 +84,7 @@ async function checkTimestampsAgainstWebsite(
                         link: game.link,
                     });
                     noWebsiteDateCount++;
-                    await saveProgress(i + 1);
+                    await saveProgress(progressFile, i + 1);
                     continue;
                 }
 
@@ -128,7 +101,7 @@ async function checkTimestampsAgainstWebsite(
                     log.warn(`no date found on website for ${game.name}`);
                     noWebsiteDateCount++;
                     if (page) await page.close();
-                    await saveProgress(i + 1);
+                    await saveProgress(progressFile, i + 1);
                     continue;
                 }
 
@@ -141,7 +114,7 @@ async function checkTimestampsAgainstWebsite(
                     });
                     noWebsiteDateCount++;
                     if (page) await page.close();
-                    await saveProgress(i + 1);
+                    await saveProgress(progressFile, i + 1);
                     continue;
                 }
 
@@ -280,7 +253,7 @@ async function checkTimestampsAgainstWebsite(
                 }
 
                 if (page) await page.close();
-                await saveProgress(i + 1);
+                await saveProgress(progressFile, i + 1);
             } catch (err) {
                 log.warn("error processing website", {
                     id: game.id,
@@ -312,12 +285,12 @@ async function checkTimestampsAgainstWebsite(
                         i
                     );
                 }
-                await saveProgress(i + 1);
+                await saveProgress(progressFile, i + 1);
                 continue;
             }
         }
 
-        await saveProgress(0);
+        await saveProgress(progressFile, 0);
         log.info("All games processed, progress reset", {
             totalGames: games.length,
         });

@@ -1,6 +1,11 @@
 require("dotenv").config();
 
+const fs = require("fs").promises;
 const log = require("@vladmandic/pilogger");
+const yargs = require("yargs");
+const puppeteer = require("puppeteer-extra");
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+puppeteer.use(StealthPlugin());
 const {
     fetchHtml,
     loadCache,
@@ -20,11 +25,26 @@ const CACHE_FILE = process.env.CACHE_FILE;
 const PROGRESS_FILE = process.env.PROGRESS_FILE;
 const MAX_RETRIES = process.env.MAX_RETRIES;
 
+const argv = yargs
+    .option("update", {
+        alias: "u",
+        type: "boolean",
+        description: "Update games by checking dates against cache.lastChecked",
+        default: false,
+    })
+    .option("count", {
+        alias: "c",
+        type: "boolean",
+        description: "Count items in games.json and check for duplicates",
+        default: false,
+    })
+    .help().argv;
+
 // Scrape details for a single game link from 1337x
 async function scrapeDetail(link, browser) {
     const page = await browser.newPage();
+    const fullLink = `${BASE_URL}${link}`;
     try {
-        const fullLink = `${BASE_URL}${link}`;
         log.info(`Fetching details for ${fullLink}`);
 
         const html = await fetchHtml(fullLink, browser);
@@ -144,7 +164,7 @@ async function scrapeDetail(link, browser) {
             const packed = packedMatch ? `${packedMatch[1]} GB` : null;
             const size = originalMatch ? parseFloat(originalMatch[1]) : null;
 
-            const fullName = (() => {
+            const name = (() => {
                 const title = document.title;
                 let cleanTitle = title
                     .replace(/^Download\s+/i, "")
@@ -157,7 +177,7 @@ async function scrapeDetail(link, browser) {
             })();
 
             return {
-                fullName,
+                name,
                 magnet,
                 genre,
                 publisher,
@@ -179,7 +199,7 @@ async function scrapeDetail(link, browser) {
 }
 
 // Scrape games from 1337x
-async function scrapeDodi() {
+async function scrapeDodi(updateMode = false) {
     const browser = await puppeteer.launch({ headless: true });
     let games = await loadFile(OUTPUT_FILE);
     let maxId =
@@ -192,14 +212,32 @@ async function scrapeDodi() {
         log.info(`Total pages to scrape: ${totalPages}`);
 
         const progress = await loadProgress(PROGRESS_FILE);
-        let lastCheckedPage = progress.lastCheckedIndex || 0;
-        log.info(`Resuming from page ${lastCheckedPage + 1}`);
+        let lastCheckedPage = progress.lastCheckedIndex || 1;
+        log.info(`Resuming from page ${lastCheckedPage}`);
 
-        for (
-            let pageNum = lastCheckedPage + 1;
-            pageNum <= totalPages;
-            pageNum++
-        ) {
+        let lastCheckedTime = null;
+        if (updateMode) {
+            if (!cache.lastChecked) {
+                log.warn(
+                    `No lastChecked timestamp in cache. Falling back to full scrape.`
+                );
+                updateMode = false;
+            } else {
+                lastCheckedTime = new Date(cache.lastChecked);
+                if (isNaN(lastCheckedTime)) {
+                    log.warn(
+                        `Invalid lastChecked timestamp in cache. Falling back to full scrape.`
+                    );
+                    updateMode = false;
+                } else {
+                    log.info(
+                        `Update mode: Only scraping games newer than ${lastCheckedTime.toISOString()}`
+                    );
+                }
+            }
+        }
+
+        for (let pageNum = lastCheckedPage; pageNum <= totalPages; pageNum++) {
             const url = `${DODI_URL}${pageNum}/`;
             log.info(`🔎 Fetching page ${pageNum}: ${url}`);
 
@@ -249,60 +287,129 @@ async function scrapeDodi() {
                     log.info(
                         `🚫 No torrents found on page ${pageNum}. Continuing…`
                     );
+                    continue;
                 } else {
                     log.state(
                         `📦 Found ${links.length} torrents on page ${pageNum}`
                     );
                 }
 
+                let allGamesOlder = true; // Track if all games on page are older
                 for (const link of links) {
-                    if (games.some((result) => result.link === link)) {
-                        log.info(`‼️ Already saved, skipping: ${link}`);
+                    const fullLink = `${BASE_URL}${link}`; // Prepend BASE_URL to the relative link
+                    if (games.some((result) => result.link === fullLink)) {
+                        log.info(`‼️ Already saved, skipping: ${fullLink}`);
                         continue;
                     }
 
-                    log.info(`🔎 Scraping [${games.length + 1}] ${link}`);
+                    if (updateMode) {
+                        const gameDetailsPreview = await scrapeDetail(
+                            link,
+                            browser
+                        );
+                        if (!gameDetailsPreview) {
+                            log.warn(
+                                `⚠️ Skipping due to detail scrape failure: ${fullLink}`
+                            );
+                            continue;
+                        }
+
+                        const gameDate = gameDetailsPreview.date
+                            ? new Date(gameDetailsPreview.date)
+                            : null;
+                        const gameUpdated = gameDetailsPreview.updated
+                            ? new Date(gameDetailsPreview.updated)
+                            : null;
+                        const referenceTime = gameUpdated || gameDate;
+
+                        if (!referenceTime || isNaN(referenceTime)) {
+                            log.warn(
+                                `⚠️ No valid date or updated time for ${fullLink}, skipping in update mode`
+                            );
+                            continue;
+                        }
+
+                        if (referenceTime <= lastCheckedTime) {
+                            log.info(
+                                `⏳ Skipping ${fullLink}: Not newer than ${lastCheckedTime.toISOString()}`
+                            );
+                            continue;
+                        } else {
+                            allGamesOlder = false;
+                        }
+                    }
+
+                    log.info(`🔎 Scraping [${games.length + 1}] ${fullLink}`);
                     const gameDetails = await scrapeDetail(link, browser);
                     if (!gameDetails) {
                         log.warn(
-                            `⚠️ Skipping due to detail scrape failure: ${link}`
+                            `⚠️ Skipping due to detail scrape failure: ${fullLink}`
                         );
                         continue;
                     }
 
                     maxId += 1;
                     gameDetails.id = maxId;
-                    gameDetails.name = gameDetails.fullName;
-                    gameDetails.link = link;
+                    gameDetails.link = fullLink;
                     gameDetails.verified = !!(
                         gameDetails.magnet && gameDetails.size > 0
                     );
                     gameDetails.lastChecked = new Date().toISOString();
                     games.push(gameDetails);
-                    log.data(`Added ${gameDetails.name}`, { link });
+                    log.data(`Added ${gameDetails.fullName}`, {
+                        link: fullLink,
+                    });
 
                     await saveFile(gameDetails, OUTPUT_FILE, {
-                        logMessage: `Saved game ${gameDetails.name} to ${OUTPUT_FILE}`,
+                        logMessage: `Saved game ${gameDetails.fullName} to ${OUTPUT_FILE}`,
                         isSingleGame: true,
                     });
                 }
 
+                // If all games on this page were older, stop scraping further pages
+                if (updateMode && allGamesOlder) {
+                    log.info(
+                        `🛑 All games on page ${pageNum} are older than ${lastCheckedTime.toISOString()}. Stopping scrape.`
+                    );
+                    break;
+                }
+
+                // Update progress and cache after each page
                 await saveProgress(PROGRESS_FILE, pageNum);
+                cache.lastChecked = new Date().toISOString(); // Update cache after each page
+                await saveCache(cache, CACHE_FILE);
+                log.info(
+                    `Updated cache with lastChecked timestamp for page ${pageNum}`
+                );
             } catch (err) {
                 log.error(`Error processing page ${pageNum}: ${err.message}`);
                 await page.close();
                 continue;
             }
         }
-
-        cache.lastChecked = new Date().toISOString();
-        await saveCache(cache, CACHE_FILE);
-        log.info("Updated cache with lastChecked timestamp");
     } catch (err) {
         log.error(`Error in scrapeDodi: ${err.message}`);
     } finally {
         await browser.close();
         log.info("Browser closed.");
+
+        // Delete progress.json if in update mode
+        if (updateMode) {
+            try {
+                await fs.unlink(PROGRESS_FILE);
+                log.info(`Deleted ${PROGRESS_FILE} after update completion.`);
+            } catch (err) {
+                if (err.code === "ENOENT") {
+                    log.info(
+                        `${PROGRESS_FILE} does not exist, no deletion needed.`
+                    );
+                } else {
+                    log.error(
+                        `Failed to delete ${PROGRESS_FILE}: ${err.message}`
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -348,9 +455,11 @@ async function countItems() {
 // Handle command-line arguments
 if (require.main === module) {
     const args = process.argv.slice(2);
-    if (args.includes("--count")) {
+    if (argv.count) {
         countItems();
+    } else if (argv.update) {
+        scrapeDodi(true);
     } else {
-        scrapeDodi();
+        scrapeDodi(false);
     }
 }

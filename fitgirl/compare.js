@@ -28,7 +28,7 @@ const timeout = parseInt(process.env.TIMEOUT);
 
 // Parse command-line arguments with yargs
 const argv = yargs
-    .option("count-items", {
+    .option("count", {
         alias: "c",
         type: "boolean",
         description: "Count items in games.json, complete.json, and temp.json",

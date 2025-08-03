@@ -6,13 +6,14 @@
     "scripts": {
         "fitgirl:compare": "cd fitgirl && node --no-warnings compare.js",
         "fitgirl:check": "cd fitgirl && node --no-warnings compare.js --check",
-        "fitgirl:count": "cd fitgirl && node --no-warnings compare.js --count-items",
+        "fitgirl:count": "cd fitgirl && node --no-warnings compare.js --count",
         "fitgirl:find": "cd fitgirl && node --no-warnings find.js",
         "fitgirl:update": "cd fitgirl && node --no-warnings update.js",
         "fitgirl:newest": "cd fitgirl && node --no-warnings newest.js",
         "fitgirl:url": "cd fitgirl && node --no-warnings newest.js --fetch",
         "fitgirl:pages": "cd fitgirl && node --no-warnings newest.js --all",
         "dodi": "cd dodi && node --no-warnings dodi.js",
+        "dodi:update": "cd dodi && node --no-warnings dodi.js --update",
         "dodi:count": "cd dodi && node --no-warnings dodi.js --count"
     },
     "keywords": [],

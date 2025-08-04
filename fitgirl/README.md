@@ -69,7 +69,7 @@ Scrape specific url using arguments. Checks if name and links changed to update.
 
 `npm run fitgirl:url <URL>`
 
-## itgirl:pages
+## fitgirl:pages
 
 **If you don't have a `complete.json` file… Be patient! This takes a bit of time.**
 

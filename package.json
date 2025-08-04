@@ -21,7 +21,6 @@
     "license": "MIT",
     "dependencies": {
         "@vladmandic/pilogger": "^0.5.1",
-        "async-lock": "^1.4.1",
         "dotenv": "^17.2.1",
         "puppeteer": "^24.15.0",
         "puppeteer-extra": "^3.3.6",

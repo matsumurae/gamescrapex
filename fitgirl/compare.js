@@ -382,7 +382,7 @@ async function main() {
 }
 
 if (require.main === module) {
-    if (argv.countItems) {
+    if (argv.count) {
         countItems().then(() => process.exit());
     } else if (argv.check) {
         (async () => {

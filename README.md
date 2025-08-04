@@ -9,7 +9,7 @@ List of providers:
 
 | Provider   | Status | Magnet     | Datanodes | Last update | Total                |
 | ---------- | ------ | ---------- | --------- | ----------- | -------------------- |
-| 🔥 Fitgirl | ✅     | ✅         | ✅        | 3/08/2025   | 5933 (5804 verified) |
+| 🔥 Fitgirl | ✅     | ✅         | ✅        | 4/08/2025   | 5937 (5804 verified) |
 | DODI       | ✅     | ✅ (1337x) | ❌        | 3/08/2025   | 2000                 |
 | GOG Games  | TODO   | —          | —         | —           | —                    |
 | SteamRIP   | TODO   | —          | —         | —           | —                    |

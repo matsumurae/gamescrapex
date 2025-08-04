@@ -18,7 +18,7 @@ const {
 
 const BASE_URL = process.env.BASE_URL;
 const DODI_URL = `${process.env.BASE_URL}/DODI-torrents/page/`;
-const DODI_WEBSITE_URL = `${process.env.DODI_WEBSITE_URL}/all-repacks-a-z-2/`;
+// const DODI_WEBSITE_URL = `${process.env.DODI_WEBSITE_URL}/all-repacks-a-z-2/`;
 const OUTPUT_FILE = process.env.FILE;
 const TIMEOUT = process.env.TIMEOUT;
 const CACHE_FILE = process.env.CACHE_FILE;
